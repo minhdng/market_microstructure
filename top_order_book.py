@@ -315,7 +315,7 @@ class TradeVisualize:
         
         return buy_or_sell
 
-    def plot_by_trade(self, immed_info_df: pd.DataFrame, ax: plt.axes = None) -> plt.axes:
+    def plot_by_trade(self, immed_info_df: pd.DataFrame, ax: plt.axes = None, plot_mid_price: bool = True) -> plt.axes:
         """
         Quick plot the prevailing bid ask prices and volumes for a trade, and the trade price.
         
@@ -327,6 +327,8 @@ class TradeVisualize:
             The data frame having the prevailing bid and ask info needed.
         ax : plt.axes, optional
             Plotting axes. The default is None.
+        plot_mid_price : bool, optional
+            Whether plotting the weighted mid_price. The default is True.
 
         Returns
         -------
@@ -340,13 +342,14 @@ class TradeVisualize:
         ask_volumes = immed_info_df['AskVolume']
         bid_volumes = immed_info_df['BidVolume']
         trade_volumes = immed_info_df['TradeVolume']
+        avg_prices = self._get_mid_prices(ask_volumes, bid_volumes, ask_prices, bid_prices, mid_type='weighted')
         
         def marker_size_remap(trade_volumes: pd.Series) -> pd.Series:
             """
             Remap trade volumes for marker size.
             """
             
-            marker_sizes = trade_volumes.map(lambda x: np.log(x) * 4 + 1)
+            marker_sizes = trade_volumes.map(lambda x: x ** 0.7 * 2 + 1)
             
             return marker_sizes
 
@@ -355,18 +358,23 @@ class TradeVisualize:
         
         # Plotting for the ask
         for idx, ask_price in ask_prices.iteritems():
-            ax.vlines(x=idx, ymin=ask_price, ymax=ask_price + ask_volumes.iloc[idx], color='black')
+            ax.vlines(x=idx, ymin=ask_price, ymax=ask_price + ask_volumes.iloc[idx], color='black', alpha=0.7)
             
         # Plotting for the bid
         for idx, bid_price in bid_prices.iteritems():
-            ax.vlines(x=idx, ymin=bid_price - bid_volumes.iloc[idx], ymax=bid_price, color='brown')
+            ax.vlines(x=idx, ymin=bid_price - bid_volumes.iloc[idx], ymax=bid_price, color='brown', alpha=0.7)
         
         # Plotting for the trade
         # Line
         ax.plot(trade_prices.index, trade_prices, linestyle='dotted', linewidth=0.5, color='darkslategrey')
         # Marker
         marker_sizes = marker_size_remap(trade_volumes)
-        ax.scatter(trade_prices.index, trade_prices, s=marker_sizes, alpha=0.5, color='darkslategrey')
+        ax.scatter(trade_prices.index, trade_prices, s=marker_sizes, alpha=0.9, color='forestgreen')
+        
+        # Plotting the weighted avg
+        if plot_mid_price:
+            ax.plot(avg_prices.index, avg_prices, alpha=0.9, linewidth=0.4, marker='s', markersize=2,
+                    linestyle='--', color='darkcyan')
         
         ax.set_ylabel('Price')
         ax.set_xlabel('Trade Sequence')
@@ -374,4 +382,128 @@ class TradeVisualize:
         ax.grid()
 
         return ax
+    
+    def get_aggre_info(self, daily_immed_info: pd.DataFrame, duration: Union[None, int] = None) -> pd.DataFrame:
+        """
+        Get aggregated info for trades by seconds.
+        
+        The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
+        they have to come from one day.
+        col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'OrderFlowImba'.
 
+        Parameters
+        ----------
+        daily_immed_info : pd.DataFrame
+            Concatenated daily info for each trade, should be an output of the get_immediate_info method.
+        duration : Union[None, int], optional
+            The duration of time in seconds. None means no aggregating, use the immediate previous data. 
+            The default is None.
+
+        Returns
+        -------
+        aggre_info : pd.DataFrame
+            Aggregated information by seconds.
+
+        """
+        
+        # 0. Setting params and intervals up
+        if duration is None:  # R1 result follows from another framework.
+            aggre_info = self._get_aggre_info_r1(daily_immed_info)
+            
+            return aggre_info
+        else:
+            dt = duration
+        # Beginning time and ending time from the dataframe (has to be from a single day)
+        df_beg_time = daily_immed_info.iloc[0]['Time']
+        df_end_time = daily_immed_info.iloc[-1]['Time']
+        # Create grids and intervals for aggregation
+        time_checkpoints = np.arange(df_beg_time, df_end_time, dt)
+        beg_times = time_checkpoints[:-1]  # Beginning time, exclude the last grid.
+        end_times = time_checkpoints[1:] - 1  # Ending time for each duration, exclude the 0th grid, move 1 ahead.
+        
+        # 1. Calculating the aggregated volumes for each trade
+        agg_impacts = np.zeros_like(beg_times)
+        time_grid_pt = 0  # Time grid pointer
+        cache_volume = []  # Volume within each time interval
+        cache_buysell = []  # Volume within each time interval
+        for row_id, row in daily_immed_info.iterrows():
+
+            if row['Time'] >= beg_times[time_grid_pt] and row['Time'] <= end_times[time_grid_pt]:
+                cache_volume.append(row['TradeVolume'])
+                cache_buysell.append(row['Buy/Sell'])
+
+            else:
+                # Dot product to calculate aggregated impact
+                agg_impact = np.dot(cache_volume, cache_buysell)
+                # Document this impact
+                agg_impacts[time_grid_pt] = agg_impact
+                time_grid_pt += 1
+                cache_volume = []
+                cache_buysell = []
+            
+            if time_grid_pt >= len(beg_times):
+                break
+
+        # 2. Calculate the index in daily_immed_info corresponding to beg_times and end_times.
+        time_grid_pt = 0  # Time grid pointer
+        beg_idx = np.empty(len(beg_times))
+        beg_idx[:] = np.NaN
+        end_idx = np.copy(beg_idx)
+        first_in_interval = True  # Flag variable
+        for row_id, row in daily_immed_info.iterrows():
+            # First instance in the interval
+            if first_in_interval:
+                beg_idx[time_grid_pt] = row_id
+
+            if row['Time'] >= beg_times[time_grid_pt] and row['Time'] <= end_times[time_grid_pt]:
+                first_in_interval = False
+            else:
+                # Last instancein the interval
+                end_idx[time_grid_pt] =  row_id
+                time_grid_pt += 1  # Pointer increment for the next subinterval.
+                first_in_interval = True
+            
+            if time_grid_pt >= len(beg_times):
+                break
+        
+        # 3. Find values for all other columns via index. Then put together in a df.
+        frame = {'Date': daily_immed_info.iloc[beg_idx]['Date'].to_numpy(),
+                 'EntryDate': daily_immed_info.iloc[beg_idx]['EntryDate'].to_numpy(),
+                 'BegTime': beg_times,
+                 'EndTime': end_times,
+                 'MidPriceBeg': daily_immed_info.iloc[beg_idx]['MidPrice'].to_numpy(),
+                 'MidPriceEnd': daily_immed_info.iloc[end_idx]['MidPrice'].to_numpy(),
+                 'OrderFlowImba': agg_impacts}
+        aggre_info = pd.DataFrame(frame)
+        
+        return aggre_info
+        
+        
+    def _get_aggre_info_r1(self, daily_immed_info: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate data for R1 calculation.
+
+        Parameters
+        ----------
+        daily_immed_info : pd.DataFrame
+            Concatenated daily info for each trade, should be an output of the get_immediate_info method.
+
+        Returns
+        -------
+        aggre_info : pd.DataFrame
+            Aggregated information by seconds.
+
+        """
+        
+        agg_impacts = daily_immed_info['TradeVolume'] * daily_immed_info['Buy/Sell']
+
+        frame = {'Date': daily_immed_info['Date'].to_numpy(),
+                 'EntryDate': daily_immed_info['EntryDate'].to_numpy(),
+                 'BegTime': daily_immed_info['Time'].to_numpy(),
+                 'EndTime': daily_immed_info['Time'].to_numpy(),
+                 'MidPriceBeg': daily_immed_info['MidPrice'].to_numpy(),
+                 'MidPriceEnd': daily_immed_info['MidPrice'].to_numpy(),
+                 'OrderFlowImba': agg_impacts}
+        aggre_info = pd.DataFrame(frame)
+        
+        return aggre_info
