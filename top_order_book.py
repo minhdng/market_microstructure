@@ -76,7 +76,17 @@ class TradeVisualize:
     def lump_conti_trades(self) -> pd.DataFrame:
         """
         Lump continuous trades together in their volume.
+        
+        Note: The result DataFrame will be re-indexed. Another concern is sometimes for continuous trades, the prices
+        change. So lumping their volume together may not be ideal.
+
+        Returns
+        -------
+        lumped_df: pd.DataFrame
+            The lumped dataframe with continuous trades volume collected together.
+
         """
+
 
         # 1. Get trades
         trades_bool = (self.data['ASK/BID'].isna()) & (self.data['Volume'] >= 1)
@@ -117,9 +127,9 @@ class TradeVisualize:
         sequel_trades_idx = np.setdiff1d(trades_idx_npa, first_trades_idx)
         lumped_df = lumped_df.drop(index=sequel_trades_idx, inplace=False)
 
-        return lumped_df
+        return lumped_df.sort_values(by=['Sequence', 'Price'], ascending=[True, False]).reset_index(drop=True)
 
-    def get_prev_ab_idx(self, trades_idx: pd.Series) -> pd.DataFrame:
+    def get_prev_ab_idx(self, trades_idx: pd.Series, handle_conti_trade: str = 'bidask') -> pd.DataFrame:
         """
         Get the prevailing ask and bid's index right before a trade.
 
@@ -127,6 +137,10 @@ class TradeVisualize:
         ----------
         trades_idx : pd.Series
             The indices at which the trade occurs.
+        handle_conti_trades: str, optional
+            How continuous trades are handled. Options are ['bidask', 'trade']. 'bidask' means look at the most
+            recent bid and ask prices before a trade occurs. 'trade' means use the trade prevailing the current trade
+            as the bid/ask price and in this case they are equal.
 
         Returns
         -------
@@ -135,19 +149,37 @@ class TradeVisualize:
         """
 
         prev_ab_idx_dict = dict()
-        # 1. Find the two indicies immediately above a trade that is not a trade
-        for num, idx in enumerate(trades_idx):
-            # Handle the continuous trade case, and move the pointer to the most recent non-trade pair.
-            pointer = idx
-            while True:
-                if pointer not in trades_idx:  # If not in there then it is a valid choice
-                    break
-                pointer -= 1  # Else, keep looking
-
-            # Put data into the dictionary
-            prev_ab_idx_dict[idx] = {'BID idx': pointer, 'ASK idx': pointer-1,
-                                     'Sequence BID': self.data.iloc[pointer]['Sequence'],
-                                     'Sequence ASK': self.data.iloc[pointer-1]['Sequence']}
+        if handle_conti_trade == 'bidask':
+            # 1. Find the two indicies immediately above a trade that is not a trade
+            for num, idx in enumerate(trades_idx):
+                # Handle the continuous trade case, and move the pointer to the most recent non-trade pair.
+                pointer = idx
+                while True:
+                    if pointer not in trades_idx:  # If not in there then it is a valid choice
+                        break
+                    pointer -= 1  # Else, keep looking
+    
+                # Put data into the dictionary
+                prev_ab_idx_dict[idx] = {'BID idx': pointer, 'ASK idx': pointer-1,
+                                         'Sequence BID': self.data.iloc[pointer]['Sequence'],
+                                         'Sequence ASK': self.data.iloc[pointer-1]['Sequence']}
+                
+        elif handle_conti_trade == 'trade':
+            # 1. Find the two indicies immediately above a trade that is not a trade
+            for num, idx in enumerate(trades_idx):
+                # Decide if the prev row is a trade or not.
+                if idx-1 in trades_idx:  # If it is a trade, then put the trade data as the prevailing data
+                    prev_ab_idx_dict[idx] = {'BID idx': idx-1, 'ASK idx': idx-1,
+                                             'Sequence BID': self.data.iloc[idx-1]['Sequence'],
+                                             'Sequence ASK': self.data.iloc[idx-1]['Sequence']}
+                
+                else:  # If the prev is not a trade, look up 2 indices for bid/ask as the prevailing data
+                    prev_ab_idx_dict[idx] = {'BID idx': idx-1, 'ASK idx': idx-2,
+                                             'Sequence BID': self.data.iloc[idx-1]['Sequence'],
+                                             'Sequence ASK': self.data.iloc[idx-2]['Sequence']}
+        
+        else:
+            raise ValueError("Available handle_conti_trade values are ['bidask', 'trade']")
 
         # 2. Change dict into pd.DataFrame
         prev_ab_df = pd.DataFrame.from_dict(data=prev_ab_idx_dict, orient="index")
@@ -307,7 +339,16 @@ class TradeVisualize:
         bid_prices = immed_info_df['BidPrice']
         ask_volumes = immed_info_df['AskVolume']
         bid_volumes = immed_info_df['BidVolume']
-        # trade_volumes = immed_info_df['TradePrice']
+        trade_volumes = immed_info_df['TradeVolume']
+        
+        def marker_size_remap(trade_volumes: pd.Series) -> pd.Series:
+            """
+            Remap trade volumes for marker size.
+            """
+            
+            marker_sizes = trade_volumes.map(lambda x: np.log(x) * 4 + 1)
+            
+            return marker_sizes
 
         # 2. Plot them
         ax = ax or plt.gca()
@@ -319,9 +360,13 @@ class TradeVisualize:
         # Plotting for the bid
         for idx, bid_price in bid_prices.iteritems():
             ax.vlines(x=idx, ymin=bid_price - bid_volumes.iloc[idx], ymax=bid_price, color='brown')
-            
+        
         # Plotting for the trade
-        ax.plot(trade_prices.index, trade_prices, marker='.', linestyle='dotted')
+        # Line
+        ax.plot(trade_prices.index, trade_prices, linestyle='dotted', linewidth=0.5, color='darkslategrey')
+        # Marker
+        marker_sizes = marker_size_remap(trade_volumes)
+        ax.scatter(trade_prices.index, trade_prices, s=marker_sizes, alpha=0.5, color='darkslategrey')
         
         ax.set_ylabel('Price')
         ax.set_xlabel('Trade Sequence')
