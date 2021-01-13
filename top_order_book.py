@@ -15,7 +15,7 @@ class TradeVisualize:
     Class that visualize the ask/bid changes with trade in it.
     """
     
-    def __init__(self, data: pd.DataFrame):
+    def __init__(self, data: pd.DataFrame, lump_trades: bool = False):
         """
         Initiate with a DataFrame as formatted by Ben. Note the data read will be reordered automatically.
 
@@ -23,6 +23,8 @@ class TradeVisualize:
         ----------
         data : pd.DataFrame
             The df directly read from the csv file cleaned by Ben.
+        lump_trades : bool, optional
+            Whether to lump continuous trades together. The default is False.
         """
 
         
@@ -30,6 +32,8 @@ class TradeVisualize:
         self.data = data.sort_values(by=['Sequence', 'Price'], ascending=[True, False]).reset_index(drop=True)
         # Change into real prices
         # self.data['Price'] = self.data['Price'].multiply(1/100)
+        if lump_trades:
+            self.data = self.lump_conti_trades()
     
     def get_trades(self, start_time: Union[int, None] = None, end_time: Union[int, None] = None,
                       include_0_vol: bool = False) -> pd.Series:
@@ -68,6 +72,52 @@ class TradeVisualize:
 
         # Returns the index series when a trade happens
         return trades_idx
+
+    def lump_conti_trades(self) -> pd.DataFrame:
+        """
+        Lump continuous trades together in their volume.
+        """
+
+        # 1. Get trades
+        trades_bool = (self.data['ASK/BID'].isna()) & (self.data['Volume'] >= 1)
+        trades_idx = trades_bool[trades_bool].index
+        
+        # 2. Lump the continuous trades' volumes
+        # 2.1 Trades that are first in a sequence (including those having no sequel)
+        first_trades_idx = []
+        for num, idx in enumerate(trades_idx):
+            # Handle the continuous trade case, and move the pointer to the most recent non-trade pair.
+            pointer = idx
+            while True:
+                if pointer not in trades_idx:  # If not in there then it is a valid choice
+                    break
+                pointer -= 1  # Else, keep looking
+            first_trades_idx.append(pointer + 1)
+        
+        first_trades_idx = np.unique(np.array(first_trades_idx))  # The unique ones are what we need
+        
+        # 2.2 Add the sequel's volumes to the trade that firstly occur
+        trades_idx_npa = np.array(trades_idx)
+        lumped_volumes = np.zeros_like(first_trades_idx)
+        p_fti = 0  # Pointer for first_trades_idx
+        p_ti = 0  # Pointer for trade_idx
+        while p_ti < len(trades_idx):
+            # If the ti pointer catches up with the fti ponter + 1, then increase fti pointer
+            if trades_idx[p_ti] == first_trades_idx[p_fti+1]:
+                p_fti += 1
+            # Lump the volume to the first trade in a sequel.
+            lumped_volumes[p_fti] += self.data.iloc[trades_idx[p_ti]]['Volume']
+            p_ti += 1
+            
+        # 3. Format the new DataFrame with lumped volume
+        # 3.1 Change the volume
+        lumped_df = self.data.copy()
+        lumped_df.loc[first_trades_idx, 'Volume'] = lumped_volumes
+        # 3.2 Get rid of sequel trades and only keep the leading one
+        sequel_trades_idx = np.setdiff1d(trades_idx_npa, first_trades_idx)
+        lumped_df = lumped_df.drop(index=sequel_trades_idx, inplace=False)
+
+        return lumped_df
 
     def get_prev_ab_idx(self, trades_idx: pd.Series) -> pd.DataFrame:
         """
@@ -123,8 +173,9 @@ class TradeVisualize:
 
         """
 
+        # Get all the pieces from data, need to reset index
         trade_idx = ab_df.index
-        trade_idx_series = pd.Series(trade_idx)
+        trade_idx_series = pd.Series(trade_idx)  # Turn into a df for assemble
         dates = self.data.iloc[trade_idx]['Date'].reset_index(drop=True)
         entry_dates = self.data.iloc[trade_idx]['EntryDate'].reset_index(drop=True)
         times = self.data.iloc[trade_idx]['Time'].reset_index(drop=True)
@@ -153,8 +204,9 @@ class TradeVisualize:
         immed_info_df = pd.DataFrame(frame)
         
         return immed_info_df
-        
-    def _get_mid_prices(self, ask_volumes: pd.Series, bid_volumes: pd.Series, ask_prices: pd.Series,
+    
+    @staticmethod
+    def _get_mid_prices(ask_volumes: pd.Series, bid_volumes: pd.Series, ask_prices: pd.Series,
                         bid_prices: pd.Series, mid_type: str) -> pd.Series:
         """
         Get mid prices for bid and ask.
@@ -194,8 +246,9 @@ class TradeVisualize:
             raise ValueError('mid_type = "simple" or "weighted"')
 
         return mid_prices
-            
-    def _check_buy_or_sell(self, trade_prices: pd.Series, ask_prices: pd.Series, bid_prices: pd.Series) -> pd.Series:
+
+    @staticmethod
+    def _check_buy_or_sell(trade_prices: pd.Series, ask_prices: pd.Series, bid_prices: pd.Series) -> pd.Series:
         """
         Find if a trade is a buy or sell order by matching with immediate prevailing price.
         
@@ -230,14 +283,16 @@ class TradeVisualize:
         
         return buy_or_sell
 
-    def plot_abt(self, prev_ab_df: pd.DataFrame, ax: plt.axes = None) -> plt.axes:
+    def plot_by_trade(self, immed_info_df: pd.DataFrame, ax: plt.axes = None) -> plt.axes:
         """
-        Quick plot the prevailing bid ask for a trade, and the trade price.
+        Quick plot the prevailing bid ask prices and volumes for a trade, and the trade price.
+        
+        Plot in candlesticks, with length indicating the volume.
 
         Parameters
         ----------
-        prev_ab_df : pd.DataFrame
-            The data frame having the prevailing bid and ask index in the sheet.
+        immed_info_df : pd.DataFrame
+            The data frame having the prevailing bid and ask info needed.
         ax : plt.axes, optional
             Plotting axes. The default is None.
 
@@ -247,26 +302,30 @@ class TradeVisualize:
             Plotting axes.
         """
 
-        trade_idx = prev_ab_df.index
-        bid_idx = prev_ab_df['BID idx']
-        ask_idx = prev_ab_df['ASK idx']
-
-        # 1. Get the prices data.
-        trade_prices = self.data.iloc[trade_idx][['Time', 'Price', 'Volume']]
-        bid_prices = self.data.iloc[bid_idx][['Time', 'Price', 'Volume']]
-        ask_prices = self.data.iloc[ask_idx][['Time', 'Price', 'Volume']]
+        trade_prices = immed_info_df['TradePrice']
+        ask_prices = immed_info_df['AskPrice']
+        bid_prices = immed_info_df['BidPrice']
+        ask_volumes = immed_info_df['AskVolume']
+        bid_volumes = immed_info_df['BidVolume']
+        # trade_volumes = immed_info_df['TradePrice']
 
         # 2. Plot them
         ax = ax or plt.gca()
-        ax.scatter(trade_prices['Time'], trade_prices['Price'], label='trade', marker='.', linewidth=1,
-                   s=trade_prices['Volume']**1.5, alpha=0.8)
-        ax.scatter(trade_prices['Time'], bid_prices['Price'], label='bid', marker='.', linewidth=1,
-                   s=bid_prices['Volume']**1.5, alpha=0.02)
-        ax.scatter(trade_prices['Time'], ask_prices['Price'], label='ask', marker='.', linewidth=1,
-                   s=ask_prices['Volume']**1.5, alpha=0.02)
+        
+        # Plotting for the ask
+        for idx, ask_price in ask_prices.iteritems():
+            ax.vlines(x=idx, ymin=ask_price, ymax=ask_price + ask_volumes.iloc[idx], color='black')
+            
+        # Plotting for the bid
+        for idx, bid_price in bid_prices.iteritems():
+            ax.vlines(x=idx, ymin=bid_price - bid_volumes.iloc[idx], ymax=bid_price, color='brown')
+            
+        # Plotting for the trade
+        ax.plot(trade_prices.index, trade_prices, marker='.', linestyle='dotted')
+        
         ax.set_ylabel('Price')
-        ax.set_xlabel('Time')
-        ax.legend()
+        ax.set_xlabel('Trade Sequence')
+
         ax.grid()
 
         return ax
