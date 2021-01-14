@@ -186,7 +186,7 @@ class TradeVisualize:
 
         return prev_ab_df
     
-    def get_immediate_info(self, ab_df: pd.DataFrame, mid_type: str = 'simple') -> pd.DataFrame:
+    def get_immediate_info(self, ab_df: pd.DataFrame) -> pd.DataFrame:
         """
         Get the immediate ask and bid info for a trade. 
 
@@ -196,8 +196,6 @@ class TradeVisualize:
         ----------
         ab_df : pd.DataFrame
             The ask and bid dataframe.
-        mid_type : str. Optional.
-            The type of mid price. Choices are 'simple' and 'weighted'. The default is 'simple'.
 
         Returns
         -------
@@ -217,7 +215,8 @@ class TradeVisualize:
         trade_prices = self.data.iloc[trade_idx]['Price'].reset_index(drop=True)
         ask_prices =  self.data.iloc[ab_df['ASK idx']]['Price'].reset_index(drop=True)
         bid_prices = self.data.iloc[ab_df['BID idx']]['Price'].reset_index(drop=True)
-        mid_prices = self._get_mid_prices(ask_volumes, bid_volumes, ask_prices, bid_prices, mid_type)
+        mid_prices_s = self._get_mid_prices(ask_volumes, bid_volumes, ask_prices, bid_prices, mid_type='simple')
+        mid_prices_w = self._get_mid_prices(ask_volumes, bid_volumes, ask_prices, bid_prices, mid_type='weighted')
         buy_or_sell = self._check_buy_or_sell(trade_prices, ask_prices, bid_prices)
 
         # Assemble into a DataFrame
@@ -231,7 +230,8 @@ class TradeVisualize:
                  'TradePrice': trade_prices,
                  'AskPrice': ask_prices,
                  'BidPrice': bid_prices,
-                 'MidPrice': mid_prices,
+                 'MidPrice': mid_prices_s,
+                 'MidPriceW': mid_prices_w,
                  'Buy/Sell': buy_or_sell}
         immed_info_df = pd.DataFrame(frame)
         
@@ -389,7 +389,8 @@ class TradeVisualize:
         
         The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
         they have to come from one day.
-        col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'OrderFlowImba'.
+        col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
+        'OrderFlowImba'.
 
         Parameters
         ----------
@@ -473,6 +474,8 @@ class TradeVisualize:
                  'EndTime': end_times,
                  'MidPriceBeg': daily_immed_info.iloc[beg_idx]['MidPrice'].to_numpy(),
                  'MidPriceEnd': daily_immed_info.iloc[end_idx]['MidPrice'].to_numpy(),
+                 'MidPriceWBeg': daily_immed_info.iloc[beg_idx]['MidPriceW'].to_numpy(),
+                 'MidPriceWEnd': daily_immed_info.iloc[end_idx]['MidPriceW'].to_numpy(),
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
         
@@ -483,6 +486,9 @@ class TradeVisualize:
         """
         Generate data for R1 calculation.
 
+        col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
+        'OrderFlowImba'.
+        
         Parameters
         ----------
         daily_immed_info : pd.DataFrame
@@ -503,6 +509,92 @@ class TradeVisualize:
                  'EndTime': daily_immed_info['Time'].to_numpy(),
                  'MidPriceBeg': daily_immed_info['MidPrice'].to_numpy(),
                  'MidPriceEnd': daily_immed_info['MidPrice'].to_numpy(),
+                 'MidPriceWBeg': daily_immed_info['MidPriceW'].to_numpy(),
+                 'MidPriceWEnd': daily_immed_info['MidPriceW'].to_numpy(),
+                 'OrderFlowImba': agg_impacts}
+        aggre_info = pd.DataFrame(frame)
+        
+        return aggre_info
+    
+    def get_aggre_info_tick(self, daily_immed_info: pd.DataFrame, duration: Union[None, int] = 1) -> pd.DataFrame:
+        """
+        Get aggregated info for trades by market time (ticks).
+        
+        The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
+        they have to come from one day.
+        col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
+        'OrderFlowImba'.
+
+        Parameters
+        ----------
+        daily_immed_info : pd.DataFrame
+            Concatenated daily info for each trade, should be an output of the get_immediate_info method.
+        duration : Union[None, int], optional
+            The duration of time in ticks (market time). None means no aggregating, use the immediate previous data.
+            This number is the same as when you want to calculate R(duration).
+            The default is None.
+
+        Returns
+        -------
+        aggre_info : pd.DataFrame
+            Aggregated information by ticks.
+
+        """
+        
+        # 0. Setting params and intervals up
+        if duration is None:  # R1 result follows from another framework.
+            aggre_info = self._get_aggre_info_r1(daily_immed_info)
+            
+            return aggre_info
+        else:
+            dt = duration
+            
+        # 1. Loop through the rows.
+        agg_impacts = np.zeros(len(daily_immed_info) - dt)
+        dates = agg_impacts.copy()
+        entry_dates = agg_impacts.copy()
+        beg_times = agg_impacts.copy()  # Beginning time for those aggregated ticks
+        end_times = agg_impacts.copy()  # Ending time for those aggregated ticks
+        mid_prices_beg = agg_impacts.copy()  # Simple medium
+        mid_prices_end = agg_impacts.copy()  # Simple medium
+        mid_prices_w_beg = agg_impacts.copy()  # Weighted medium
+        mid_prices_w_end = agg_impacts.copy()  # Weighted medium
+        cache_volume = []  # Volume within each time interval
+        cache_buysell = []  # Volume within each time interval
+        for row_id, row in daily_immed_info.iterrows():
+            for i in range(dt + 1):
+                cache_volume.append(daily_immed_info.iloc[i + row_id]['TradeVolume'])
+                cache_buysell.append(daily_immed_info.iloc[i + row_id]['Buy/Sell'])
+                
+            # Dot product to calculate aggregated impact
+            agg_impact = np.dot(cache_volume, cache_buysell)
+            # Document this impact
+            agg_impacts[row_id] = agg_impact
+            cache_volume = []
+            cache_buysell = []
+            
+            # Calculate other quantities
+            dates[row_id] = int(row['Date'])
+            entry_dates[row_id] = int(row['EntryDate'])
+            beg_times[row_id] = int(row['Time'])
+            end_times[row_id] = int(daily_immed_info.iloc[row_id + dt]['Time'])
+            mid_prices_beg[row_id] = row['MidPrice']
+            mid_prices_end[row_id] = daily_immed_info.iloc[row_id + dt]['MidPrice']
+            mid_prices_w_beg[row_id] = row['MidPriceW']
+            mid_prices_w_end[row_id] = daily_immed_info.iloc[row_id + dt]['MidPriceW']
+            
+            if row_id + 1 >= len(agg_impacts):
+                 break
+ 
+        # 3. Find values for all other columns via index. Then put together in a df.
+        frame = {'Date': dates,
+                 'EntryDate': entry_dates,
+                 'BegTime': beg_times,
+                 'EndTime': end_times,
+                 'MidPriceBeg': mid_prices_beg,
+                 'MidPriceEnd': mid_prices_end,
+                 'MidPriceWBeg': mid_prices_w_beg,
+                 'MidPriceWEnd': mid_prices_w_end,
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
         
