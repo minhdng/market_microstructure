@@ -390,7 +390,7 @@ class TradeVisualize:
         The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
         they have to come from one day.
         col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
-        'OrderFlowImba'.
+        'Buy/Sell', 'OrderFlowImba'.
 
         Parameters
         ----------
@@ -476,6 +476,7 @@ class TradeVisualize:
                  'MidPriceEnd': daily_immed_info.iloc[end_idx]['MidPrice'].to_numpy(),
                  'MidPriceWBeg': daily_immed_info.iloc[beg_idx]['MidPriceW'].to_numpy(),
                  'MidPriceWEnd': daily_immed_info.iloc[end_idx]['MidPriceW'].to_numpy(),
+                 'Buy/Sell': daily_immed_info.iloc[beg_idx]['Buy/Sell'].to_numpy(),
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
         
@@ -487,7 +488,7 @@ class TradeVisualize:
         Generate data for R1 calculation.
 
         col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
-        'OrderFlowImba'.
+        'Buy/Sell', 'OrderFlowImba'.
         
         Parameters
         ----------
@@ -511,6 +512,7 @@ class TradeVisualize:
                  'MidPriceEnd': daily_immed_info['MidPrice'].to_numpy(),
                  'MidPriceWBeg': daily_immed_info['MidPriceW'].to_numpy(),
                  'MidPriceWEnd': daily_immed_info['MidPriceW'].to_numpy(),
+                 'Buy/Sell': daily_immed_info['Buy/Sell'].to_numpy(),
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
         
@@ -523,7 +525,7 @@ class TradeVisualize:
         The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
         they have to come from one day.
         col: 'Date', 'EntryDate', 'BegTime', 'EndTime', 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd',
-        'OrderFlowImba'.
+        'Buy/Sell', 'OrderFlowImba'.
 
         Parameters
         ----------
@@ -559,6 +561,7 @@ class TradeVisualize:
         mid_prices_end = agg_impacts.copy()  # Simple medium
         mid_prices_w_beg = agg_impacts.copy()  # Weighted medium
         mid_prices_w_end = agg_impacts.copy()  # Weighted medium
+        buy_or_sell_data = agg_impacts.copy()  # Buy or sell for epsilon t
         cache_volume = []  # Volume within each time interval
         cache_buysell = []  # Volume within each time interval
         for row_id, row in daily_immed_info.iterrows():
@@ -582,6 +585,7 @@ class TradeVisualize:
             mid_prices_end[row_id] = daily_immed_info.iloc[row_id + dt]['MidPrice']
             mid_prices_w_beg[row_id] = row['MidPriceW']
             mid_prices_w_end[row_id] = daily_immed_info.iloc[row_id + dt]['MidPriceW']
+            buy_or_sell_data[row_id] = row['Buy/Sell']
             
             if row_id + 1 >= len(agg_impacts):
                  break
@@ -595,6 +599,7 @@ class TradeVisualize:
                  'MidPriceEnd': mid_prices_end,
                  'MidPriceWBeg': mid_prices_w_beg,
                  'MidPriceWEnd': mid_prices_w_end,
+                 'Buy/Sell': buy_or_sell_data,
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
         

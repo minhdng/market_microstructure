@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import top_order_book as tob
 
 #%% Test, read data
-data = pd.read_csv(r'D:\MFM2021\Data\CMD_BBO\20201019\xcme-bbo-es-fut-20201019-r-00095_8.csv')
+data = pd.read_csv(r'D:\MFM2021\Data\CMD_BBO\20201019\xcme-bbo-es-fut-20201019-r-00095_9.csv')
 mini_data = data
 TV = tob.TradeVisualize(mini_data, lump_trades=False)
 my_data = TV.data
@@ -28,10 +28,12 @@ trades_info = TV.get_immediate_info(prev_ab_df)
 summary = trades_info.describe()
 
 #%% Get aggregated info by tick time
+# You need to concatenate multiple trades_info DataFrames from all csv files in a day for the following calculation.
+# Here I didn't do it.
 aggre_info_tick_r0 = TV.get_aggre_info_tick(trades_info, duration=None)
 
 # Look up 5 ticks, not including itself (r5)
-aggre_info_tick_r6 = TV.get_aggre_info_tick(trades_info, duration=5)
+aggre_info_tick_r5 = TV.get_aggre_info_tick(trades_info, duration=5)
 
 #%% Get aggregated impact by actual time (in seconds)
 # For calculating R1, don't aggregate
