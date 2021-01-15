@@ -675,6 +675,5 @@ class TradeVisualize:
                  'Buy/Sell': daily_immed_info.iloc[beg_idx]['Buy/Sell'].to_numpy(),
                  'OrderFlowImba': agg_impacts}
         aggre_info = pd.DataFrame(frame)
- 
-        
+
         return aggre_info
