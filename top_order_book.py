@@ -15,7 +15,7 @@ class TradeVisualize:
     Class that visualize the ask/bid changes with trade in it.
     """
     
-    def __init__(self, data: pd.DataFrame, lump_trades: bool = False):
+    def __init__(self, data: pd.DataFrame = None, lump_trades: bool = False):
         """
         Initiate with a DataFrame as formatted by Ben. Note the data read will be reordered automatically.
 
@@ -27,13 +27,13 @@ class TradeVisualize:
             Whether to lump continuous trades together. The default is False.
         """
 
-        
-        # Sort the data by sequence at first, then by price
-        self.data = data.sort_values(by=['Sequence', 'Price'], ascending=[True, False]).reset_index(drop=True)
-        # Change into real prices
-        # self.data['Price'] = self.data['Price'].multiply(1/100)
-        if lump_trades:
-            self.data = self.lump_conti_trades()
+        if data is not None:
+            # Sort the data by sequence at first, then by price
+            self.data = data.sort_values(by=['Sequence', 'Price'], ascending=[True, False]).reset_index(drop=True)
+            # Change into real prices
+            # self.data['Price'] = self.data['Price'].multiply(1/100)
+            if lump_trades:
+                self.data = self.lump_conti_trades()
     
     def get_trades(self, start_time: Union[int, None] = None, end_time: Union[int, None] = None,
                       include_0_vol: bool = False) -> pd.Series:
@@ -640,8 +640,8 @@ class TradeVisualize:
             
         # Get the indices
         df_len = len(daily_immed_info)
-        beg_idx = np.arange(0, df_len + 1, dt)
-        end_idx = np.arange(dt-1, df_len + 1, dt)
+        beg_idx = np.arange(0, df_len, dt)
+        end_idx = np.arange(dt-1, df_len, dt)
         beg_idx = beg_idx[:len(end_idx)]
         
         # 1. Calculating the aggregated volumes for each trade
