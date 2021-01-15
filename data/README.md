@@ -1,0 +1,1 @@
+# This file contain raw data and processed data (daily splitted, cleaned or aggregated). Input for optimize or graphing should be put into output/ instead of this folder.
