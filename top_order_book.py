@@ -604,3 +604,76 @@ class TradeVisualize:
         aggre_info = pd.DataFrame(frame)
         
         return aggre_info
+    
+    def get_aggre_info_tick_nonconsec(self, daily_immed_info: pd.DataFrame,
+                                      duration: Union[None, int] = 1) -> pd.DataFrame:
+        """
+        Get aggregated info for trades by market time (ticks), but the window do not overlap.
+        
+        The daily immediate info need to have its time continuous, concatenated from immediate info DataFrames, and
+        they have to come from one day.
+        col: 'MidPriceBeg', 'MidPriceEnd', 'MidPriceWBeg', 'MidPriceWEnd', 'Buy/Sell', 'OrderFlowImba'.
+
+        Parameters
+        ----------
+        daily_immed_info : pd.DataFrame
+            Concatenated daily info for each trade, should be an output of the get_immediate_info method.
+        duration : Union[None, int], optional
+            The duration of time in ticks (market time). None means no aggregating, use the immediate previous data.
+            This number is the same as when you want to calculate R(duration).
+            The default is None.
+
+        Returns
+        -------
+        aggre_info : pd.DataFrame
+            Aggregated information by ticks.
+
+        """
+        
+        # 0. Setting params and intervals up
+        if duration is None:  # R1 result follows from another framework.
+            aggre_info = self._get_aggre_info_r1(daily_immed_info)
+            
+            return aggre_info
+        else:
+            dt = duration
+            
+        # Get the indices
+        df_len = len(daily_immed_info)
+        beg_idx = np.arange(0, df_len + 1, dt)
+        end_idx = np.arange(dt-1, df_len + 1, dt)
+        beg_idx = beg_idx[:len(end_idx)]
+        
+        # 1. Calculating the aggregated volumes for each trade
+        agg_impacts = np.zeros_like(beg_idx)
+        time_grid_pt = 0  # Time grid pointer
+        cache_volume = []  # Volume within each time interval
+        cache_buysell = []  # Volume within each time interval
+        for row_id, row in daily_immed_info.iterrows():
+
+            if row_id >= beg_idx[time_grid_pt] and row_id <= end_idx[time_grid_pt]:
+                cache_volume.append(row['TradeVolume'])
+                cache_buysell.append(row['Buy/Sell'])
+
+            else:
+                # Dot product to calculate aggregated impact
+                agg_impact = np.dot(cache_volume, cache_buysell)
+                # Document this impact
+                agg_impacts[time_grid_pt] = agg_impact
+                time_grid_pt += 1
+                cache_volume = []
+                cache_buysell = []
+            
+            if time_grid_pt >= len(end_idx):
+                break
+        
+        # 2. Find values for all other columns via index. Then put together in a df.
+        frame = {'MidPriceBeg': daily_immed_info.iloc[beg_idx]['MidPrice'].to_numpy(),
+                 'MidPriceEnd': daily_immed_info.iloc[end_idx]['MidPrice'].to_numpy(),
+                 'MidPriceWBeg': daily_immed_info.iloc[beg_idx]['MidPriceW'].to_numpy(),
+                 'MidPriceWEnd': daily_immed_info.iloc[end_idx]['MidPriceW'].to_numpy(),
+                 'Buy/Sell': daily_immed_info.iloc[beg_idx]['Buy/Sell'].to_numpy(),
+                 'OrderFlowImba': agg_impacts}
+        aggre_info = pd.DataFrame(frame)
+
+        return aggre_info
