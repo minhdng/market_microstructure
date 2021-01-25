@@ -1,0 +1,4 @@
+# ignore all raw data
+
+# ignore all output data
+output/*.csv
