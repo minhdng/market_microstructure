@@ -30,11 +30,8 @@ under the Microscope; Bouchard , Bonart, Donier, Gould.
   + https://arxiv.org/abs/1706.04163
 - Hawkes model:
   + https://arxiv.org/abs/1412.7096
-  + https://stmorse.github.io/journal/Hawkes-
-python.html
-  + Excellent python library for Hawkes processes: https://x-
-datainitiative.github.io/tick/index.htmlhttps://x-
-datainitiative.github.io/tick/index.html
+  + https://stmorse.github.io/journal/Hawkes-python.html
+  + Excellent python library for Hawkes processes: https://x-datainitiative.github.io/tick/index.html
 
 ## Project
 
